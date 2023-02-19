@@ -35,11 +35,6 @@ type Message struct {
 	Payload []byte
 }
 
-// FormatHave creates a HAVE message
-func FormatChoke() *Message {
-	return &Message{ID: MsgChoke}
-}
-
 // FormatRequest creates a REQUEST message
 func FormatRequest(index, begin, length int) *Message {
 	payload := make([]byte, 12)
