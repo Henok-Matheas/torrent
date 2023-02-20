@@ -78,7 +78,6 @@ func (h *Handshake) Serialize() []byte {
 	curr += copy(buf[curr:], h.InfoHash[:])
 	curr += copy(buf[curr:], h.PeerID[:])
 
-	fmt.Println(buf, curr)
 	return buf
 }
 
@@ -113,8 +112,6 @@ func Read(r io.Reader) (*Handshake, error) {
 		InfoHash: infoHash,
 		PeerID:   peerID,
 	}
-
-	fmt.Println("Successful")
 
 	return &h, nil
 }
@@ -176,10 +173,8 @@ func (m *Message) Serialize() []byte {
 	length := uint32(len(m.Payload) + 1) // +1 for id
 	buf := make([]byte, 4+length)
 	binary.BigEndian.PutUint32(buf[0:4], length)
-	fmt.Println(m.ID)
 	buf[4] = byte(m.ID)
 	copy(buf[5:], m.Payload)
-	fmt.Println("buffer", buf)
 	return buf
 }
 
@@ -256,8 +251,6 @@ func parseRequest(msg *Message) (*Request, error) {
 		BlockSize:  blockSize,
 	}
 
-	fmt.Printf("begin: %s and end: %s \n", begin, end)
-
 	return &request, nil
 }
 
@@ -279,15 +272,13 @@ func Upload(msg *Message, conn net.Conn, path string) error {
 	file, err := os.Open(path)
 	defer file.Close()
 	if err != nil {
-		fmt.Println("error is", err)
-		return err
+		return fmt.Errorf("could not read file due to unexpected error", err)
 	}
 	data := make([]byte, request.BlockSize)
-	read, err := file.ReadAt(data, int64(request.Begin))
+	_, err = file.ReadAt(data, int64(request.Begin))
 
 	if err != nil {
-		fmt.Println("Something went wrong while uploading", read)
-		return err
+		return fmt.Errorf("uploading Interrupted due to unexpected error", err)
 	}
 
 	message := FormatPiece(request, data)
@@ -313,14 +304,13 @@ func handleConnection(conn net.Conn) {
 	}
 	bitField := Message{ID: MsgBitfield, Payload: Payload}
 	conn.Write(bitField.Serialize())
-	Unchoke, err := readMessage(reader)
-	fmt.Println(Unchoke)
+	_, err = readMessage(reader)
 	if err != nil {
+
 		return
 	}
 
-	Interested, err := readMessage(reader)
-	fmt.Println(Interested)
+	_, err = readMessage(reader)
 	if err != nil {
 		return
 	}
@@ -334,12 +324,11 @@ func handleConnection(conn net.Conn) {
 
 	for {
 		requestMessage, err := readMessage(reader)
-		go Upload(requestMessage, conn, "/home/henok/Desktop/golang/torrent/seeder/debian-edu-11.6.0-amd64-netinst.iso")
-		fmt.Println("request", requestMessage)
 		if err != nil {
-			fmt.Println("Error", err)
+			fmt.Errorf("Could not read message", requestMessage, err)
 			return
 		}
+		go Upload(requestMessage, conn, "/home/henok/Desktop/golang/torrent/seeder/debian-edu-11.6.0-amd64-netinst.iso")
 	}
 
 	// now we want a handler to upload the files
@@ -377,15 +366,43 @@ func handleConnection(conn net.Conn) {
 
 }
 
+func getIp() (net.IP, error) {
+	addrs, err := net.InterfaceAddrs()
+
+	if err != nil {
+		return nil, fmt.Errorf("Could not find local Ip adress", err)
+	}
+
+	fmt.Println(addrs)
+
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
+			return ipnet.IP, nil
+		}
+	}
+
+	return nil, fmt.Errorf("Could not find local Ip adresses")
+
+}
+
 func main() {
-	ln, err := net.Listen("tcp", ":8080")
+	ip, err := getIp()
+	port := 8080
 	if err != nil {
 		log.Fatalf("Failed to listen: %s", err)
 	}
+	ln, err := net.ListenTCP("tcp", &net.TCPAddr{IP: ip, Port: port})
+
+	if err != nil {
+		log.Fatalf("Failed to listen: %s", err)
+	}
+
+	log.Printf("Listening on ip: %s and port : %d ", ip.To4().String(), port)
+
 	for {
 		conn, err := ln.Accept()
 		if err == nil {
-			fmt.Println("Accepted Connection", conn)
+			log.Println("Accepted Connection", conn.RemoteAddr().String())
 			go handleConnection(conn)
 		}
 	}

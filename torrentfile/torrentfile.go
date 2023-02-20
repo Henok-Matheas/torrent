@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"crypto/sha1"
 	"fmt"
+	"log"
 	"math"
+	"net"
 	"os"
 
 	"torrent/p2p"
@@ -47,6 +49,8 @@ func (t *TorrentFile) DownloadToFile(path string) error {
 	if err != nil {
 		return err
 	}
+
+	log.Printf("Listening on Ip: %s and port : %d", net.IP(peerID[:]).String(), Port)
 
 	peers, err := t.requestPeers(peerID, Port)
 	if err != nil {

@@ -22,10 +22,11 @@ func Unmarshal(peersBin []byte) ([]Peer, error) {
 		return nil, err
 	}
 	peer := make([]byte, 4)
-	peer[0] = 127
-	peer[1] = 0
-	peer[2] = 0
-	peer[3] = 1
+	peer[0] = 10
+	peer[1] = 6
+	peer[2] = 250
+	peer[3] = 212
+
 	peers := make([]Peer, numPeers)
 	for i := 0; i < numPeers; i++ {
 		// offset := i * peerSize
