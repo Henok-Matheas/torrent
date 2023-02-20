@@ -5,9 +5,12 @@ import (
 	"crypto/rand"
 	"crypto/sha1"
 	"fmt"
+	"math"
 	"os"
 
 	"torrent/p2p"
+
+	"torrent/bitfield"
 
 	"github.com/jackpal/bencode-go"
 )
@@ -50,6 +53,19 @@ func (t *TorrentFile) DownloadToFile(path string) error {
 		return err
 	}
 
+	lengthPieces := float64(len(t.PieceHashes))
+	const ByteSize = float64(8)
+	bitField := make(bitfield.Bitfield, int(math.Ceil(float64(lengthPieces)/ByteSize)))
+
+	fmt.Println("The bitField should be", len(bitField), bitField)
+
+	outFile, err := os.OpenFile(t.Name, os.O_RDWR|os.O_CREATE, 0666)
+
+	if err != nil {
+		return err
+	}
+	defer outFile.Close()
+
 	torrent := p2p.Torrent{
 		Peers:       peers,
 		PeerID:      peerID,
@@ -58,22 +74,14 @@ func (t *TorrentFile) DownloadToFile(path string) error {
 		PieceLength: t.PieceLength,
 		Length:      t.Length,
 		Name:        t.Name,
+		File:        outFile,
+		Bitfield:    bitField,
 	}
-	fmt.Println(torrent.PieceLength)
-	buf, err := torrent.Download()
-	if err != nil {
-		return err
+	downloaderr := torrent.Download()
+	if downloaderr != nil {
+		return downloaderr
 	}
 
-	outFile, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer outFile.Close()
-	_, err = outFile.Write(buf)
-	if err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -107,7 +115,7 @@ func (i *bencodeInfo) splitPieceHashes() ([][20]byte, error) {
 	hashLen := 20 // Length of SHA-1 hash
 	buf := []byte(i.Pieces)
 	if len(buf)%hashLen != 0 {
-		err := fmt.Errorf("Received malformed pieces of length %d", len(buf))
+		err := fmt.Errorf("received malformed pieces of length %d", len(buf))
 		return nil, err
 	}
 	numHashes := len(buf) / hashLen
@@ -125,7 +133,8 @@ func (bto *bencodeTorrent) toTorrentFile() (TorrentFile, error) {
 		return TorrentFile{}, err
 	}
 	pieceHashes, err := bto.Info.splitPieceHashes()
-	fmt.Printf("number of pieces is %s and the size of a single piece is %s \n", len(pieceHashes), bto.Info.PieceLength)
+
+	fmt.Printf("number of pieces is %d and the size of a single piece is %d \n", len(pieceHashes), bto.Info.PieceLength)
 	if err != nil {
 		return TorrentFile{}, err
 	}

@@ -284,6 +284,7 @@ func Upload(msg *Message, conn net.Conn, path string) error {
 	}
 	data := make([]byte, request.BlockSize)
 	read, err := file.ReadAt(data, int64(request.Begin))
+
 	if err != nil {
 		fmt.Println("Something went wrong while uploading", read)
 		return err

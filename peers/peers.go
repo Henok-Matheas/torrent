@@ -18,7 +18,7 @@ func Unmarshal(peersBin []byte) ([]Peer, error) {
 	// numPeers := len(peersBin) / peerSize
 	numPeers := 1
 	if len(peersBin)%peerSize != 0 {
-		err := fmt.Errorf("Received malformed peers")
+		err := fmt.Errorf("received malformed peers")
 		return nil, err
 	}
 	peer := make([]byte, 4)
