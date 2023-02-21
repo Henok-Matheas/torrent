@@ -1,7 +1,6 @@
 package torrentfile
 
 import (
-	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -17,7 +16,7 @@ type bencodeTrackerResp struct {
 	Peers    string `bencode:"peers"`
 }
 
-func (t *TorrentFile) buildTrackerURL(peerID [20]byte, port uint16) (string, error) {
+func (t *TorrentFile) buildTrackerURL(peerID [20]byte, Port uint16) (string, error) {
 	base, err := url.Parse(t.Announce)
 	if err != nil {
 		return "", err
@@ -46,7 +45,6 @@ func (t *TorrentFile) requestPeers(peerID [20]byte, port uint16) ([]peers.Peer, 
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println(resp.Body, "this is the response body")
 	defer resp.Body.Close()
 
 	trackerResp := bencodeTrackerResp{}

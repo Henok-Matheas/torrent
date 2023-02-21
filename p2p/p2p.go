@@ -25,6 +25,7 @@ const MaxBacklog = 5
 type Torrent struct {
 	Peers       []peers.Peer
 	PeerID      [20]byte
+	Port        uint16
 	InfoHash    [20]byte
 	PieceHashes [][20]byte
 	PieceLength int
@@ -92,7 +93,6 @@ func attemptDownloadPiece(c *client.Client, pw *pieceWork) ([]byte, error) {
 		client: c,
 		buf:    make([]byte, pw.length),
 	}
-
 	// Setting a deadline helps get unresponsive peers unstuck.
 	// 30 seconds is more than enough time to download a 262 KB piece
 	c.Conn.SetDeadline(time.Now().Add(30 * time.Second))
@@ -129,7 +129,7 @@ func attemptDownloadPiece(c *client.Client, pw *pieceWork) ([]byte, error) {
 func checkIntegrity(pw *pieceWork, buf []byte) error {
 	hash := sha1.Sum(buf)
 	if !bytes.Equal(hash[:], pw.hash[:]) {
-		return fmt.Errorf("Index %d failed integrity check", pw.index)
+		return fmt.Errorf("index %d failed integrity check", pw.index)
 	}
 	return nil
 }
@@ -204,7 +204,7 @@ func (t *Torrent) Download() error {
 		_, err := t.File.ReadAt(data, int64(begin))
 
 		if err != nil {
-			fmt.Errorf("Something went wrong while trying to Read File", err)
+			fmt.Errorf("something went wrong while trying to Read File", err)
 		}
 
 		// Check Integrity of the piece

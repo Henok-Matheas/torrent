@@ -9,16 +9,14 @@ import (
 	"math"
 	"net"
 	"os"
-
-	"torrent/p2p"
-
 	"torrent/bitfield"
+	"torrent/p2p"
 
 	"github.com/jackpal/bencode-go"
 )
 
 // Port to listen on
-const Port uint16 = 6881
+// const Port uint16 = 6881
 
 // TorrentFile encodes the metadata from a .torrent file
 type TorrentFile struct {
@@ -43,36 +41,35 @@ type bencodeTorrent struct {
 }
 
 // DownloadToFile downloads a torrent and writes it to a file
-func (t *TorrentFile) DownloadToFile(path string) error {
+func (t *TorrentFile) DownloadToFile(path string, Port uint16) (*p2p.Torrent, error) {
 	var peerID [20]byte
 	_, err := rand.Read(peerID[:])
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	log.Printf("Listening on Ip: %s and port : %d", net.IP(peerID[:]).String(), Port)
 
 	peers, err := t.requestPeers(peerID, Port)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	lengthPieces := float64(len(t.PieceHashes))
 	const ByteSize = float64(8)
 	bitField := make(bitfield.Bitfield, int(math.Ceil(float64(lengthPieces)/ByteSize)))
 
-	fmt.Println("The bitField should be", len(bitField), bitField)
-
 	outFile, err := os.OpenFile(t.Name, os.O_RDWR|os.O_CREATE, 0666)
 
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer outFile.Close()
 
 	torrent := p2p.Torrent{
 		Peers:       peers,
 		PeerID:      peerID,
+		Port:        Port,
 		InfoHash:    t.InfoHash,
 		PieceHashes: t.PieceHashes,
 		PieceLength: t.PieceLength,
@@ -83,10 +80,10 @@ func (t *TorrentFile) DownloadToFile(path string) error {
 	}
 	downloaderr := torrent.Download()
 	if downloaderr != nil {
-		return downloaderr
+		return nil, downloaderr
 	}
 
-	return nil
+	return &torrent, nil
 }
 
 // Open parses a torrent file
@@ -138,7 +135,6 @@ func (bto *bencodeTorrent) toTorrentFile() (TorrentFile, error) {
 	}
 	pieceHashes, err := bto.Info.splitPieceHashes()
 
-	fmt.Printf("number of pieces is %d and the size of a single piece is %d \n", len(pieceHashes), bto.Info.PieceLength)
 	if err != nil {
 		return TorrentFile{}, err
 	}

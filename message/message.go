@@ -6,32 +6,32 @@ import (
 	"io"
 )
 
-type messageID uint8
+type MessageID uint8
 
 const (
 	// MsgChoke chokes the receiver
-	MsgChoke messageID = 0
+	MsgChoke MessageID = 0
 	// MsgUnchoke unchokes the receiver
-	MsgUnchoke messageID = 1
+	MsgUnchoke MessageID = 1
 	// MsgInterested expresses interest in receiving data
-	MsgInterested messageID = 2
+	MsgInterested MessageID = 2
 	// MsgNotInterested expresses disinterest in receiving data
-	MsgNotInterested messageID = 3
+	MsgNotInterested MessageID = 3
 	// MsgHave alerts the receiver that the sender has downloaded a piece
-	MsgHave messageID = 4
+	MsgHave MessageID = 4
 	// MsgBitfield encodes which pieces that the sender has downloaded
-	MsgBitfield messageID = 5
+	MsgBitfield MessageID = 5
 	// MsgRequest requests a block of data from the receiver
-	MsgRequest messageID = 6
+	MsgRequest MessageID = 6
 	// MsgPiece delivers a block of data to fulfill a request
-	MsgPiece messageID = 7
+	MsgPiece MessageID = 7
 	// MsgCancel cancels a request
-	MsgCancel messageID = 8
+	MsgCancel MessageID = 8
 )
 
 // Message stores ID and payload of a message
 type Message struct {
-	ID      messageID
+	ID      MessageID
 	Payload []byte
 }
 
@@ -44,11 +44,30 @@ func FormatRequest(index, begin, length int) *Message {
 	return &Message{ID: MsgRequest, Payload: payload}
 }
 
+func FormatChoke() *Message {
+	return &Message{ID: MsgChoke}
+}
+
+func FormatPiece(Payload []byte) *Message {
+	return &Message{ID: MsgBitfield, Payload: Payload}
+}
+
 // FormatHave creates a HAVE message
 func FormatHave(index int) *Message {
 	payload := make([]byte, 4)
 	binary.BigEndian.PutUint32(payload, uint32(index))
 	return &Message{ID: MsgHave, Payload: payload}
+}
+
+func ParseUnchoke(msg *Message) (int, error) {
+	if msg.ID != MsgUnchoke {
+		return 0, fmt.Errorf("Expected HAVE (ID %d), got ID %d", MsgUnchoke, msg.ID)
+	}
+	if len(msg.Payload) != 4 {
+		return 0, fmt.Errorf("Expected payload length 4, got length %d", len(msg.Payload))
+	}
+	index := int(binary.BigEndian.Uint32(msg.Payload))
+	return index, nil
 }
 
 // ParsePiece parses a PIECE message and copies its payload into a buffer
@@ -123,7 +142,7 @@ func Read(r io.Reader) (*Message, error) {
 	}
 
 	m := Message{
-		ID:      messageID(messageBuf[0]),
+		ID:      MessageID(messageBuf[0]),
 		Payload: messageBuf[1:],
 	}
 

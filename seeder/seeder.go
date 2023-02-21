@@ -1,4 +1,4 @@
-package main
+package seeder
 
 import (
 	"bufio"
@@ -7,40 +7,10 @@ import (
 	"io"
 	"log"
 	"net"
-	"net/http"
 	"os"
-	"sync"
-	"time"
+	"torrent/message"
+	"torrent/p2p"
 )
-
-type messageID uint8
-
-const (
-	// MsgChoke chokes the receiver
-	MsgChoke messageID = 0
-	// MsgUnchoke unchokes the receiver
-	MsgUnchoke messageID = 1
-	// MsgInterested expresses interest in receiving data
-	MsgInterested messageID = 2
-	// MsgNotInterested expresses disinterest in receiving data
-	MsgNotInterested messageID = 3
-	// MsgHave alerts the receiver that the sender has downloaded a piece
-	MsgHave messageID = 4
-	// MsgBitfield encodes which pieces that the sender has downloaded
-	MsgBitfield messageID = 5
-	// MsgRequest requests a block of data from the receiver
-	MsgRequest messageID = 6
-	// MsgPiece delivers a block of data to fulfill a request
-	MsgPiece messageID = 7
-	// MsgCancel cancels a request
-	MsgCancel messageID = 8
-)
-
-// Message stores ID and payload of a message
-type Message struct {
-	ID      messageID
-	Payload []byte
-}
 
 type Request struct {
 	Index      int
@@ -54,10 +24,6 @@ type Handshake struct {
 	Pstr     string
 	InfoHash [20]byte
 	PeerID   [20]byte
-}
-
-func FormatChoke() *Message {
-	return &Message{ID: MsgChoke}
 }
 
 // New creates a new handshake with the standard pstr
@@ -116,81 +82,8 @@ func Read(r io.Reader) (*Handshake, error) {
 	return &h, nil
 }
 
-type Backend struct {
-	net.Conn
-	Reader *bufio.Reader
-	Writer *bufio.Writer
-}
-
-var backendQueue chan *Backend
-var requestBytes map[string]int64
-var requestLock sync.Mutex
-
-func init() {
-	requestBytes = make(map[string]int64)
-	backendQueue = make(chan *Backend, 10)
-}
-
-func getBackend() (*Backend, error) {
-	select {
-	case be := <-backendQueue:
-		return be, nil
-	case <-time.After(100 * time.Millisecond):
-		be, err := net.Dial("tcp", "127.0.0.1:8081")
-		if err != nil {
-			return nil, err
-		}
-
-		return &Backend{
-			Conn:   be,
-			Reader: bufio.NewReader(be),
-			Writer: bufio.NewWriter(be),
-		}, nil
-	}
-}
-
-func queueBackend(be *Backend) {
-	select {
-	case backendQueue <- be:
-	case <-time.After(1 * time.Second):
-		be.Close()
-	}
-}
-
-func updateStats(req *http.Request, resp *http.Response) int64 {
-	requestLock.Lock()
-	defer requestLock.Unlock()
-
-	bytes := requestBytes[req.URL.Path] + resp.ContentLength
-	requestBytes[req.URL.Path] = bytes
-	return bytes
-}
-
-func (m *Message) Serialize() []byte {
-	if m == nil {
-		return make([]byte, 4)
-	}
-	length := uint32(len(m.Payload) + 1) // +1 for id
-	buf := make([]byte, 4+length)
-	binary.BigEndian.PutUint32(buf[0:4], length)
-	buf[4] = byte(m.ID)
-	copy(buf[5:], m.Payload)
-	return buf
-}
-
-func ParseUnchoke(msg *Message) (int, error) {
-	if msg.ID != MsgUnchoke {
-		return 0, fmt.Errorf("Expected HAVE (ID %d), got ID %d", MsgUnchoke, msg.ID)
-	}
-	if len(msg.Payload) != 4 {
-		return 0, fmt.Errorf("Expected payload length 4, got length %d", len(msg.Payload))
-	}
-	index := int(binary.BigEndian.Uint32(msg.Payload))
-	return index, nil
-}
-
 // Read parses a message from a stream. Returns `nil` on keep-alive message
-func readMessage(r io.Reader) (*Message, error) {
+func readMessage(r io.Reader) (*message.Message, error) {
 	lengthBuf := make([]byte, 4)
 	_, err := io.ReadFull(r, lengthBuf)
 	if err != nil {
@@ -209,8 +102,8 @@ func readMessage(r io.Reader) (*Message, error) {
 		return nil, err
 	}
 
-	m := Message{
-		ID:      messageID(messageBuf[0]),
+	m := message.Message{
+		ID:      message.MessageID(messageBuf[0]),
 		Payload: messageBuf[1:],
 	}
 
@@ -218,29 +111,29 @@ func readMessage(r io.Reader) (*Message, error) {
 }
 
 func SendUnchoke(conn net.Conn) error {
-	msg := Message{ID: MsgUnchoke}
+	msg := message.Message{ID: message.MsgUnchoke}
 	_, err := conn.Write(msg.Serialize())
 	return err
 }
 
-func parseRequest(msg *Message) (*Request, error) {
-	if msg.ID != MsgRequest {
-		return nil, fmt.Errorf("Expected REQUEST (ID %d), got ID %d", MsgRequest, msg.ID)
+// Some Remaining shit todo here
+func parseRequest(torrent *p2p.Torrent, msg *message.Message) (*Request, error) {
+	if msg.ID != message.MsgRequest {
+		return nil, fmt.Errorf("Expected REQUEST (ID %d), got ID %d", message.MsgRequest, msg.ID)
 	}
 
 	if len(msg.Payload) < 12 {
 		return nil, fmt.Errorf("Payload too short. %d < 8", len(msg.Payload))
 	}
+	MaxBound := torrent.PieceLength * len(torrent.PieceHashes)
 	index := int(binary.BigEndian.Uint32(msg.Payload[0:4]))
 	blockStart := int(binary.BigEndian.Uint32(msg.Payload[4:8]))
 	blockSize := int(binary.BigEndian.Uint32(msg.Payload[8:12]))
-	pieceSize := 262144
-	fileSize := 471859200
-	begin := index*pieceSize + blockStart
+	begin := index*torrent.PieceLength + blockStart
 	end := begin + blockSize
 
-	if end > fileSize {
-		end = fileSize
+	if end > MaxBound {
+		end = MaxBound
 		blockSize = end - begin
 	}
 	request := Request{
@@ -254,22 +147,22 @@ func parseRequest(msg *Message) (*Request, error) {
 	return &request, nil
 }
 
-func FormatPiece(request *Request, data []byte) *Message {
+func FormatPiece(request *Request, data []byte) *message.Message {
 	payload := make([]byte, 8+len(data))
 	binary.BigEndian.PutUint32(payload[0:4], uint32(request.Index))
 	binary.BigEndian.PutUint32(payload[4:8], uint32(request.BlockBegin))
 	for idx := 0; idx < len(data); idx++ {
 		payload[8+idx] = data[idx]
 	}
-	return &Message{ID: MsgPiece, Payload: payload}
+	return &message.Message{ID: message.MsgPiece, Payload: payload}
 }
 
-func Upload(msg *Message, conn net.Conn, path string) error {
-	request, err := parseRequest(msg)
+func Upload(torrent *p2p.Torrent, msg *message.Message, conn net.Conn) error {
+	request, err := parseRequest(torrent, msg)
 	if err != nil {
 		return err
 	}
-	file, err := os.Open(path)
+	file, err := os.Open(torrent.Name)
 	defer file.Close()
 	if err != nil {
 		return fmt.Errorf("could not read file due to unexpected error", err)
@@ -289,7 +182,7 @@ func Upload(msg *Message, conn net.Conn, path string) error {
 	return nil
 }
 
-func handleConnection(conn net.Conn) {
+func handleConnection(torrent *p2p.Torrent, conn net.Conn) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
 	res, err := Read(reader)
@@ -298,11 +191,8 @@ func handleConnection(conn net.Conn) {
 		return
 	}
 	conn.Write(res.Serialize())
-	Payload := make([]byte, 255)
-	for i := 0; i < len(Payload); i++ {
-		Payload[i] = 255
-	}
-	bitField := Message{ID: MsgBitfield, Payload: Payload}
+	Payload := torrent.Bitfield
+	bitField := message.Message{ID: message.MsgBitfield, Payload: Payload}
 	conn.Write(bitField.Serialize())
 	_, err = readMessage(reader)
 	if err != nil {
@@ -325,85 +215,27 @@ func handleConnection(conn net.Conn) {
 	for {
 		requestMessage, err := readMessage(reader)
 		if err != nil {
-			fmt.Errorf("Could not read message", requestMessage, err)
+			fmt.Errorf("could not read message", requestMessage, err)
 			return
 		}
-		go Upload(requestMessage, conn, "/home/henok/Desktop/golang/torrent/seeder/debian-edu-11.6.0-amd64-netinst.iso")
+		go Upload(torrent, requestMessage, conn)
 	}
-
-	// now we want a handler to upload the files
-	// go handleUpload(reader, conn)
-
-	// req, err := http.ReadRequest(reader)
-	// if err != nil {
-	// 	if err != io.EOF {
-	// 		log.Printf("Failed to Load Request %s", err)
-	// 	}
-	// 	return
-	// }
-
-	// be, err := getBackend()
-	// if err != nil {
-	// 	return
-	// }
-
-	// be_reader := bufio.NewReader(be)
-	// if err := req.Write(be); err == nil {
-	// 	be.Writer.Flush()
-
-	// 	resp, err := http.ReadResponse(be_reader, req)
-	// 	if err == nil {
-	// 		bytes := updateStats(req, resp)
-	// 		resp.Header.Set("X-Bytes", strconv.FormatInt(bytes, 10))
-
-	// 		err := resp.Write(conn)
-	// 		if err == nil {
-	// 			log.Printf("%s: %d", req.URL.Path, resp.StatusCode)
-	// 		}
-	// 	}
-	// }
-	// go queueBackend(be)
-
 }
 
-func getIp() (net.IP, error) {
-	addrs, err := net.InterfaceAddrs()
-
-	if err != nil {
-		return nil, fmt.Errorf("Could not find local Ip adress", err)
-	}
-
-	fmt.Println(addrs)
-
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
-			return ipnet.IP, nil
-		}
-	}
-
-	return nil, fmt.Errorf("Could not find local Ip adresses")
-
-}
-
-func main() {
-	ip, err := getIp()
-	port := 8080
-	if err != nil {
-		log.Fatalf("Failed to listen: %s", err)
-	}
-	ln, err := net.ListenTCP("tcp", &net.TCPAddr{IP: ip, Port: port})
+func HandleServer(torrent *p2p.Torrent) {
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", torrent.Port))
 
 	if err != nil {
 		log.Fatalf("Failed to listen: %s", err)
 	}
 
-	log.Printf("Listening on ip: %s and port : %d ", ip.To4().String(), port)
+	log.Printf("Listening on localhost and port: %d ", torrent.Port)
 
 	for {
 		conn, err := ln.Accept()
 		if err == nil {
 			log.Println("Accepted Connection", conn.RemoteAddr().String())
-			go handleConnection(conn)
+			go handleConnection(torrent, conn)
 		}
 	}
 }
