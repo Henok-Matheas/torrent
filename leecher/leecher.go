@@ -2,17 +2,17 @@ package leecher
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha1"
 	"fmt"
 	"log"
-	"os"
-	"runtime"
+	"net"
 	"time"
 
-	"torrent/bitfield"
-	"torrent/client"
+	"torrent/connection"
 	"torrent/message"
 	"torrent/peers"
+	"torrent/torrentfile"
 )
 
 // MaxBlockSize is the largest number of bytes a request can ask for
@@ -23,16 +23,10 @@ const MaxRequests = 5
 
 // Leecher holds all the data required to download a torrent from a list of peers
 type Leecher struct {
-	Peers       []peers.Peer
-	PeerID      [20]byte
-	Port        uint16
-	InfoHash    [20]byte
-	PieceHashes [][20]byte
-	PieceLength int
-	Length      int
-	Name        string
-	File        *os.File
-	Bitfield    bitfield.Bitfield
+	Peers   []peers.Peer
+	PeerID  [20]byte
+	Port    uint16
+	Torrent torrentfile.Torrent
 }
 
 type pieceWork struct {
@@ -48,11 +42,35 @@ type pieceResult struct {
 
 type pieceProgress struct {
 	index      int
-	client     *client.Client
+	client     *connection.Connection
 	buf        []byte
 	downloaded int
 	requested  int
 	backlog    int
+}
+
+// Creates a Leecher
+func CreateLeecher(t torrentfile.Torrent, Port uint16) (*Leecher, error) {
+	var peerID [20]byte
+	_, err := rand.Read(peerID[:])
+	if err != nil {
+		return nil, err
+	}
+
+	log.Printf("Listening on Ip: %s and port : %d", net.IP(peerID[:]).String(), Port)
+
+	peers, err := t.GetPeers(peerID, Port)
+	if err != nil {
+		return nil, err
+	}
+
+	leecher := Leecher{
+		Peers:   peers,
+		PeerID:  peerID,
+		Port:    Port,
+		Torrent: t,
+	}
+	return &leecher, nil
 }
 
 func (state *pieceProgress) readMessage() error {
@@ -66,17 +84,9 @@ func (state *pieceProgress) readMessage() error {
 	}
 
 	switch msg.ID {
-	case message.MsgUnchoke:
+	case message.Unchoke:
 		state.client.Choked = false
-	case message.MsgChoke:
-		state.client.Choked = true
-	case message.MsgHave:
-		index, err := message.ParseHave(msg)
-		if err != nil {
-			return err
-		}
-		state.client.Bitfield.SetPiece(index)
-	case message.MsgPiece:
+	case message.Piece:
 		n, err := message.ParsePiece(state.index, state.buf, msg)
 		if err != nil {
 			return err
@@ -87,7 +97,7 @@ func (state *pieceProgress) readMessage() error {
 	return nil
 }
 
-func attemptDownloadPiece(c *client.Client, pw *pieceWork) ([]byte, error) {
+func attemptDownloadPiece(c *connection.Connection, pw *pieceWork) ([]byte, error) {
 	state := pieceProgress{
 		index:  pw.index,
 		client: c,
@@ -123,6 +133,7 @@ func attemptDownloadPiece(c *client.Client, pw *pieceWork) ([]byte, error) {
 		}
 	}
 
+	fmt.Println("attempt failed")
 	return state.buf, nil
 }
 
@@ -135,7 +146,7 @@ func checkIntegrity(pw *pieceWork, buf []byte) error {
 }
 
 func (t *Leecher) startDownloadWorker(peer peers.Peer, workQueue chan *pieceWork, results chan *pieceResult) {
-	c, err := client.New(peer, t.PeerID, t.InfoHash)
+	c, err := connection.NewSeeder(peer, t.PeerID, t.Torrent.InfoHash)
 	if err != nil {
 		log.Printf("Could not handshake with %s. Disconnecting\n", peer.IP)
 		return
@@ -143,12 +154,11 @@ func (t *Leecher) startDownloadWorker(peer peers.Peer, workQueue chan *pieceWork
 	defer c.Conn.Close()
 	log.Printf("Completed handshake with %s\n", peer.IP)
 
-	c.SendUnchoke()
-	c.SendInterested()
-
 	for pw := range workQueue {
-		if !c.Bitfield.HasPiece(pw.index) {
+		fmt.Println(pw)
+		if !c.PeerBitfield.HasPiece(pw.index) {
 			workQueue <- pw // Put piece back on the queue
+			fmt.Println("putting back")
 			continue
 		}
 
@@ -167,53 +177,24 @@ func (t *Leecher) startDownloadWorker(peer peers.Peer, workQueue chan *pieceWork
 			continue
 		}
 
-		c.SendHave(pw.index)
+		fmt.Println("this")
 		results <- &pieceResult{pw.index, buf}
 	}
 }
 
-func (t *Leecher) calculateBoundsForPiece(index int) (begin int, end int) {
-	begin = index * t.PieceLength
-	end = begin + t.PieceLength
-	if end > t.Length {
-		end = t.Length
-	}
-	return begin, end
-}
-
-func (t *Leecher) calculatePieceSize(index int) int {
-	begin, end := t.calculateBoundsForPiece(index)
-	return end - begin
-}
-
 // Download downloads the torrent. This writes to the file as soon as the piece is downloaded.
 func (t *Leecher) Download() error {
-	log.Println("Starting download for", t.Name)
-	// Init queues for workers to retrieve work and Writes result to file
-	donePieces := 0
+	downloaded := 0
 
-	workQueue := make(chan *pieceWork, len(t.PieceHashes))
+	workQueue := make(chan *pieceWork, len(t.Torrent.PieceHashes))
 	results := make(chan *pieceResult)
-	for index, hash := range t.PieceHashes {
-		begin, _ := t.calculateBoundsForPiece(index)
-		length := t.calculatePieceSize(index)
+	for index, hash := range t.Torrent.PieceHashes {
+		length := t.Torrent.PieceSize(index)
 
 		pieceWork := pieceWork{index, hash, length}
 
-		data := make([]byte, length)
-		_, err := t.File.ReadAt(data, int64(begin))
-
-		if err != nil {
-			fmt.Errorf("something went wrong while trying to Read File", err)
-		}
-
-		// Check Integrity of the piece
-		integrityerr := checkIntegrity(&pieceWork, data)
-
-		if integrityerr == nil {
-			log.Printf("Restored Piece %d from Disk\n", index)
-			donePieces += 1
-			t.Bitfield.SetPiece(index)
+		if t.Torrent.Bitfield.HasPiece(index) {
+			downloaded += 1
 		} else {
 			workQueue <- &pieceWork
 		}
@@ -224,20 +205,18 @@ func (t *Leecher) Download() error {
 		go t.startDownloadWorker(peer, workQueue, results)
 	}
 
-	for donePieces < len(t.PieceHashes) {
+	for downloaded < len(t.Torrent.PieceHashes) {
 		res := <-results
-		begin, _ := t.calculateBoundsForPiece(res.index)
+		begin, _ := t.Torrent.PieceBound(res.index)
 
 		// Write to file as soon as it is downloaded
-		_, err := t.File.WriteAt(res.buf, int64(begin))
+		_, err := t.Torrent.File.WriteAt(res.buf, int64(begin))
 		if err != nil {
 			return err
 		}
-		donePieces++
+		downloaded++
 
-		percent := float64(donePieces) / float64(len(t.PieceHashes)) * 100
-		numWorkers := runtime.NumGoroutine() - 1 // subtract 1 for main thread
-		log.Printf("(%0.2f%%) Downloaded piece #%d from %d peers\n", percent, res.index, numWorkers)
+		log.Printf("(%0.2f%%) Downloaded\n", float64(downloaded)/float64(len(t.Torrent.PieceHashes))*100)
 	}
 	log.Printf("Finished Downloading\n")
 	close(workQueue)

@@ -4,10 +4,10 @@ import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"os"
+	"torrent/connection"
 	"torrent/handshake"
 	"torrent/message"
 	"torrent/torrentfile"
@@ -21,44 +21,10 @@ type Request struct {
 	BlockSize  int
 }
 
-// Read parses a message from a stream. Returns `nil` on keep-alive message
-func readMessage(r io.Reader) (*message.Message, error) {
-	lengthBuf := make([]byte, 4)
-	_, err := io.ReadFull(r, lengthBuf)
-	if err != nil {
-		return nil, err
-	}
-	length := binary.BigEndian.Uint32(lengthBuf)
-
-	// keep-alive message
-	if length == 0 {
-		return nil, nil
-	}
-
-	messageBuf := make([]byte, length)
-	_, err = io.ReadFull(r, messageBuf)
-	if err != nil {
-		return nil, err
-	}
-
-	m := message.Message{
-		ID:      message.MessageID(messageBuf[0]),
-		Payload: messageBuf[1:],
-	}
-
-	return &m, nil
-}
-
-func SendUnchoke(conn net.Conn) error {
-	msg := message.Message{ID: message.MsgUnchoke}
-	_, err := conn.Write(msg.Serialize())
-	return err
-}
-
 // Some Remaining shit todo here
 func parseRequest(torrent *torrentfile.Torrent, msg *message.Message) (*Request, error) {
-	if msg.ID != message.MsgRequest {
-		return nil, fmt.Errorf("Expected REQUEST (ID %d), got ID %d", message.MsgRequest, msg.ID)
+	if msg.ID != message.Request {
+		return nil, fmt.Errorf("Expected REQUEST (ID %d), got ID %d", message.Request, msg.ID)
 	}
 
 	if len(msg.Payload) < 12 {
@@ -86,14 +52,14 @@ func parseRequest(torrent *torrentfile.Torrent, msg *message.Message) (*Request,
 	return &request, nil
 }
 
-func FormatPiece(request *Request, data []byte) *message.Message {
+func CreatePieceMessage(request *Request, data []byte) *message.Message {
 	payload := make([]byte, 8+len(data))
 	binary.BigEndian.PutUint32(payload[0:4], uint32(request.Index))
 	binary.BigEndian.PutUint32(payload[4:8], uint32(request.BlockBegin))
 	for idx := 0; idx < len(data); idx++ {
 		payload[8+idx] = data[idx]
 	}
-	return &message.Message{ID: message.MsgPiece, Payload: payload}
+	return &message.Message{ID: message.Piece, Payload: payload}
 }
 
 func Upload(torrent *torrentfile.Torrent, msg *message.Message, conn net.Conn) error {
@@ -113,7 +79,7 @@ func Upload(torrent *torrentfile.Torrent, msg *message.Message, conn net.Conn) e
 		return fmt.Errorf("uploading Interrupted due to unexpected error", err)
 	}
 
-	message := FormatPiece(request, data)
+	message := CreatePieceMessage(request, data)
 
 	conn.Write(message.Serialize())
 
@@ -131,28 +97,18 @@ func handleConnection(torrent *torrentfile.Torrent, conn net.Conn) {
 	}
 	conn.Write(res.Serialize())
 	Payload := torrent.Bitfield
-	bitField := message.Message{ID: message.MsgBitfield, Payload: Payload}
+	bitField := message.Message{ID: message.Bitfield, Payload: Payload}
 	conn.Write(bitField.Serialize())
-	_, err = readMessage(reader)
-	if err != nil {
-
-		return
-	}
-
-	_, err = readMessage(reader)
-	if err != nil {
-		return
-	}
 
 	// maybe add a checker if the number of goroutines hasn't been overloaded
-	error := SendUnchoke(conn)
+	error := connection.SendUnchoke(conn)
 
 	if error != nil {
 		return
 	}
 
 	for {
-		requestMessage, err := readMessage(reader)
+		requestMessage, err := message.Read(reader)
 		if err != nil {
 			fmt.Errorf("could not read message", requestMessage, err)
 			return

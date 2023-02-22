@@ -2,18 +2,27 @@ package torrentfile
 
 import (
 	"bytes"
-	"crypto/rand"
 	"crypto/sha1"
 	"fmt"
 	"log"
 	"math"
-	"net"
+	"net/http"
+	"net/url"
 	"os"
+	"strconv"
+	"time"
 	"torrent/bitfield"
-	"torrent/leecher"
+
+	"torrent/peers"
 
 	"github.com/jackpal/bencode-go"
 )
+
+// TrackerResponse is the response we get from the tracker
+type TrackerResponse struct {
+	Interval int    `bencode:"interval"`
+	Peers    string `bencode:"peers"`
+}
 
 // TorrentFile is the content inside the .torrent file
 type TorrentFile struct {
@@ -78,7 +87,7 @@ func (i *bencodeInfo) hashPieces() ([][20]byte, error) {
 }
 
 // changes bencode torrent into torrentfile
-func (bto *bencodeTorrent) toTorrentFile() (TorrentFile, error) {
+func (bto *bencodeTorrent) ParseTorrentFile() (TorrentFile, error) {
 	infoHash, err := bto.Info.hash()
 	if err != nil {
 		return TorrentFile{}, err
@@ -100,7 +109,7 @@ func (bto *bencodeTorrent) toTorrentFile() (TorrentFile, error) {
 }
 
 // calculates the bound for a single piece
-func (t *Torrent) calculateBoundsForPiece(index int) (begin int, end int) {
+func (t *Torrent) PieceBound(index int) (begin int, end int) {
 	begin = index * t.PieceLength
 	end = begin + t.PieceLength
 	if end > t.Length {
@@ -110,8 +119,8 @@ func (t *Torrent) calculateBoundsForPiece(index int) (begin int, end int) {
 }
 
 // calculates the size for a single piece
-func (t *Torrent) calculatePieceSize(index int) int {
-	begin, end := t.calculateBoundsForPiece(index)
+func (t *Torrent) PieceSize(index int) int {
+	begin, end := t.PieceBound(index)
 	return end - begin
 }
 
@@ -127,8 +136,8 @@ func checkIntegrity(piece int, piecehash [20]byte, buf []byte) error {
 // Checks if the pieces have been succesfully downloaded
 func (torrent Torrent) Restore() {
 	for piece, hash := range torrent.PieceHashes {
-		begin, _ := torrent.calculateBoundsForPiece(piece)
-		length := torrent.calculatePieceSize(piece)
+		begin, _ := torrent.PieceBound(piece)
+		length := torrent.PieceSize(piece)
 
 		data := make([]byte, length)
 		_, err := torrent.File.ReadAt(data, int64(begin))
@@ -147,7 +156,7 @@ func (torrent Torrent) Restore() {
 	}
 }
 
-func (torrentFile TorrentFile) toTorrent() (Torrent, error) {
+func (torrentFile TorrentFile) ParseTorrent() (Torrent, error) {
 	outFile, err := os.OpenFile(torrentFile.Name, os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return Torrent{}, err
@@ -188,42 +197,48 @@ func Unmarshal(path string) (Torrent, error) {
 		return Torrent{}, err
 	}
 
-	torrentFile, err := bto.toTorrentFile()
+	torrentFile, err := bto.ParseTorrentFile()
 
 	if err != nil {
 		return Torrent{}, fmt.Errorf("Something went wrong while parsing TorrentFile", err)
 	}
 
-	return torrentFile.toTorrent()
+	return torrentFile.ParseTorrent()
 
 }
 
-// Creates a Leecher
-func (t *Torrent) CreateLeecher(Port uint16) (*leecher.Leecher, error) {
-	var peerID [20]byte
-	_, err := rand.Read(peerID[:])
+func (t *Torrent) buildTrackerURL(peerID [20]byte, Port uint16) (string, error) {
+	base, err := url.Parse(t.Announce)
+	if err != nil {
+		return "", err
+	}
+	params := url.Values{
+		"info_hash": []string{string(t.InfoHash[:])},
+		"peer_id":   []string{string(peerID[:])},
+		"port":      []string{strconv.Itoa(int(Port))},
+	}
+	base.RawQuery = params.Encode()
+	return base.String(), nil
+}
+
+func (t *Torrent) GetPeers(peerID [20]byte, port uint16) ([]peers.Peer, error) {
+	url, err := t.buildTrackerURL(peerID, port)
 	if err != nil {
 		return nil, err
 	}
 
-	log.Printf("Listening on Ip: %s and port : %d", net.IP(peerID[:]).String(), Port)
+	c := &http.Client{Timeout: 15 * time.Second}
+	resp, err := c.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
 
-	peers, err := t.requestPeers(peerID, Port)
+	trackerResp := TrackerResponse{}
+	err = bencode.Unmarshal(resp.Body, &trackerResp)
 	if err != nil {
 		return nil, err
 	}
 
-	leecher := leecher.Leecher{
-		Peers:       peers,
-		PeerID:      peerID,
-		Port:        Port,
-		InfoHash:    t.InfoHash,
-		PieceHashes: t.PieceHashes,
-		PieceLength: t.PieceLength,
-		Length:      t.Length,
-		Name:        t.Name,
-		File:        t.File,
-		Bitfield:    t.Bitfield,
-	}
-	return &leecher, nil
+	return peers.Unmarshal([]byte(trackerResp.Peers))
 }

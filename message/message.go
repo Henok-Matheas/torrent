@@ -6,32 +6,17 @@ import (
 	"io"
 )
 
-type MessageID uint8
+type ID uint8
 
 const (
-	// MsgChoke chokes the receiver
-	MsgChoke MessageID = 0
-	// MsgUnchoke unchokes the receiver
-	MsgUnchoke MessageID = 1
-	// MsgInterested expresses interest in receiving data
-	MsgInterested MessageID = 2
-	// MsgNotInterested expresses disinterest in receiving data
-	MsgNotInterested MessageID = 3
-	// MsgHave alerts the receiver that the sender has downloaded a piece
-	MsgHave MessageID = 4
-	// MsgBitfield encodes which pieces that the sender has downloaded
-	MsgBitfield MessageID = 5
-	// MsgRequest requests a block of data from the receiver
-	MsgRequest MessageID = 6
-	// MsgPiece delivers a block of data to fulfill a request
-	MsgPiece MessageID = 7
-	// MsgCancel cancels a request
-	MsgCancel MessageID = 8
+	Unchoke  ID = 1
+	Bitfield ID = 5
+	Request  ID = 6
+	Piece    ID = 7
 )
 
-// Message stores ID and payload of a message
 type Message struct {
-	ID      MessageID
+	ID      ID
 	Payload []byte
 }
 
@@ -41,27 +26,16 @@ func FormatRequest(index, begin, length int) *Message {
 	binary.BigEndian.PutUint32(payload[0:4], uint32(index))
 	binary.BigEndian.PutUint32(payload[4:8], uint32(begin))
 	binary.BigEndian.PutUint32(payload[8:12], uint32(length))
-	return &Message{ID: MsgRequest, Payload: payload}
-}
-
-func FormatChoke() *Message {
-	return &Message{ID: MsgChoke}
+	return &Message{ID: Request, Payload: payload}
 }
 
 func FormatPiece(Payload []byte) *Message {
-	return &Message{ID: MsgBitfield, Payload: Payload}
-}
-
-// FormatHave creates a HAVE message
-func FormatHave(index int) *Message {
-	payload := make([]byte, 4)
-	binary.BigEndian.PutUint32(payload, uint32(index))
-	return &Message{ID: MsgHave, Payload: payload}
+	return &Message{ID: Bitfield, Payload: Payload}
 }
 
 func ParseUnchoke(msg *Message) (int, error) {
-	if msg.ID != MsgUnchoke {
-		return 0, fmt.Errorf("Expected HAVE (ID %d), got ID %d", MsgUnchoke, msg.ID)
+	if msg.ID != Unchoke {
+		return 0, fmt.Errorf("Expected HAVE (ID %d), got ID %d", Unchoke, msg.ID)
 	}
 	if len(msg.Payload) != 4 {
 		return 0, fmt.Errorf("Expected payload length 4, got length %d", len(msg.Payload))
@@ -72,8 +46,8 @@ func ParseUnchoke(msg *Message) (int, error) {
 
 // ParsePiece parses a PIECE message and copies its payload into a buffer
 func ParsePiece(index int, buf []byte, msg *Message) (int, error) {
-	if msg.ID != MsgPiece {
-		return 0, fmt.Errorf("Expected PIECE (ID %d), got ID %d", MsgPiece, msg.ID)
+	if msg.ID != Piece {
+		return 0, fmt.Errorf("Expected PIECE (ID %d), got ID %d", Piece, msg.ID)
 	}
 	if len(msg.Payload) < 8 {
 		return 0, fmt.Errorf("Payload too short. %d < 8", len(msg.Payload))
@@ -92,18 +66,6 @@ func ParsePiece(index int, buf []byte, msg *Message) (int, error) {
 	}
 	copy(buf[begin:], data)
 	return len(data), nil
-}
-
-// ParseHave parses a HAVE message
-func ParseHave(msg *Message) (int, error) {
-	if msg.ID != MsgHave {
-		return 0, fmt.Errorf("Expected HAVE (ID %d), got ID %d", MsgHave, msg.ID)
-	}
-	if len(msg.Payload) != 4 {
-		return 0, fmt.Errorf("Expected payload length 4, got length %d", len(msg.Payload))
-	}
-	index := int(binary.BigEndian.Uint32(msg.Payload))
-	return index, nil
 }
 
 // Serialize serializes a message into a buffer of the form
@@ -142,44 +104,9 @@ func Read(r io.Reader) (*Message, error) {
 	}
 
 	m := Message{
-		ID:      MessageID(messageBuf[0]),
+		ID:      ID(messageBuf[0]),
 		Payload: messageBuf[1:],
 	}
 
 	return &m, nil
-}
-
-func (m *Message) name() string {
-	if m == nil {
-		return "KeepAlive"
-	}
-	switch m.ID {
-	case MsgChoke:
-		return "Choke"
-	case MsgUnchoke:
-		return "Unchoke"
-	case MsgInterested:
-		return "Interested"
-	case MsgNotInterested:
-		return "NotInterested"
-	case MsgHave:
-		return "Have"
-	case MsgBitfield:
-		return "Bitfield"
-	case MsgRequest:
-		return "Request"
-	case MsgPiece:
-		return "Piece"
-	case MsgCancel:
-		return "Cancel"
-	default:
-		return fmt.Sprintf("Unknown#%d", m.ID)
-	}
-}
-
-func (m *Message) String() string {
-	if m == nil {
-		return m.name()
-	}
-	return fmt.Sprintf("%s [%d]", m.name(), len(m.Payload))
 }
