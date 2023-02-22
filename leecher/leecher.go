@@ -132,8 +132,6 @@ func attemptDownloadPiece(c *connection.Connection, pw *pieceWork) ([]byte, erro
 			return nil, err
 		}
 	}
-
-	fmt.Println("attempt failed")
 	return state.buf, nil
 }
 
@@ -155,10 +153,8 @@ func (t *Leecher) startDownloadWorker(peer peers.Peer, workQueue chan *pieceWork
 	log.Printf("Completed handshake with %s\n", peer.IP)
 
 	for pw := range workQueue {
-		fmt.Println(pw)
 		if !c.PeerBitfield.HasPiece(pw.index) {
 			workQueue <- pw // Put piece back on the queue
-			fmt.Println("putting back")
 			continue
 		}
 
@@ -177,7 +173,6 @@ func (t *Leecher) startDownloadWorker(peer peers.Peer, workQueue chan *pieceWork
 			continue
 		}
 
-		fmt.Println("this")
 		results <- &pieceResult{pw.index, buf}
 	}
 }

@@ -118,7 +118,7 @@ func handleConnection(torrent *torrentfile.Torrent, conn net.Conn) {
 }
 
 func HandleSeed(torrent *torrentfile.Torrent, Port uint16) {
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", Port))
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", Port))
 
 	if err != nil {
 		log.Fatalf("Failed to listen: %s", err)

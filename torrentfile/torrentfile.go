@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"strconv"
-	"time"
 	"torrent/bitfield"
 
 	"torrent/peers"
@@ -74,7 +73,7 @@ func (i *bencodeInfo) hashPieces() ([][20]byte, error) {
 	hashLen := 20 // Length of SHA-1 hash
 	buf := []byte(i.Pieces)
 	if len(buf)%hashLen != 0 {
-		err := fmt.Errorf("received malformed pieces of length %d", len(buf))
+		err := fmt.Errorf("pieces formatted incorrectly %d", len(buf))
 		return nil, err
 	}
 	numHashes := len(buf) / hashLen
@@ -207,28 +206,31 @@ func Unmarshal(path string) (Torrent, error) {
 
 }
 
-func (t *Torrent) buildTrackerURL(peerID [20]byte, Port uint16) (string, error) {
+func (t *Torrent) EncodeURL(peerID [20]byte, Port uint16) (string, error) {
 	base, err := url.Parse(t.Announce)
 	if err != nil {
 		return "", err
 	}
 	params := url.Values{
-		"info_hash": []string{string(t.InfoHash[:])},
-		"peer_id":   []string{string(peerID[:])},
-		"port":      []string{strconv.Itoa(int(Port))},
+		"info_hash":  []string{string(t.InfoHash[:])},
+		"peer_id":    []string{string(peerID[:])},
+		"port":       []string{strconv.Itoa(int(Port))},
+		"uploaded":   []string{"0"},
+		"downloaded": []string{"0"},
+		"compact":    []string{"1"},
+		"left":       []string{strconv.Itoa(t.Length)},
 	}
+
 	base.RawQuery = params.Encode()
 	return base.String(), nil
 }
 
 func (t *Torrent) GetPeers(peerID [20]byte, port uint16) ([]peers.Peer, error) {
-	url, err := t.buildTrackerURL(peerID, port)
+	url, err := t.EncodeURL(peerID, port)
 	if err != nil {
 		return nil, err
 	}
-
-	c := &http.Client{Timeout: 15 * time.Second}
-	resp, err := c.Get(url)
+	resp, err := http.Get(url)
 	if err != nil {
 		return nil, err
 	}

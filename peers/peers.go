@@ -36,7 +36,6 @@ func Unmarshal(peersBin []byte) ([]Peer, error) {
 		peers[i].Port = binary.BigEndian.Uint16([]byte(peersBin[offset+4 : offset+6]))
 		// peers[i].IP = net.IP(peer)
 		// peers[i].Port = 8080
-		// fmt.Println(peers[i].IP.String(), strconv.Itoa(int(peers[i].Port)))
 	}
 
 	return peers, nil
