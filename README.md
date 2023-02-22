@@ -4,10 +4,12 @@ A torrent seeder and leecher using go
 ## Note
 The Torrent implementation here can download from remote seeders but the seeder can only seed to local peers.
 
-## To leech a Torrent
+## To Leech a Torrent
 run the code: 
 go run main.go <Insert Port> <Insert Torrent>
 
+  
+## To Seed a Torrent
 once the leecher has finished downloading the file then you can replace the peers found by the tracker with your own peer that is running in the same network.
 
 to do that follow the steps below:
