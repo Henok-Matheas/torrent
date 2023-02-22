@@ -1,4 +1,4 @@
-package seeder
+package seedr
 
 import (
 	"bufio"
@@ -10,7 +10,9 @@ import (
 	"os"
 	"torrent/handshake"
 	"torrent/message"
-	"torrent/torrentfile"
+	"torrent/swarm"
+
+	"github.com/veggiedefender/torrent-client/p2p"
 )
 
 type Request struct {
@@ -56,7 +58,7 @@ func SendUnchoke(conn net.Conn) error {
 }
 
 // Some Remaining shit todo here
-func parseRequest(torrent *torrentfile.Torrent, msg *message.Message) (*Request, error) {
+func parseRequest(torrent *p2p.Torrent, msg *message.Message) (*Request, error) {
 	if msg.ID != message.MsgRequest {
 		return nil, fmt.Errorf("Expected REQUEST (ID %d), got ID %d", message.MsgRequest, msg.ID)
 	}
@@ -96,7 +98,7 @@ func FormatPiece(request *Request, data []byte) *message.Message {
 	return &message.Message{ID: message.MsgPiece, Payload: payload}
 }
 
-func Upload(torrent *torrentfile.Torrent, msg *message.Message, conn net.Conn) error {
+func Upload(torrent *p2p.Torrent, msg *message.Message, conn net.Conn) error {
 	request, err := parseRequest(torrent, msg)
 	if err != nil {
 		return err
@@ -121,7 +123,7 @@ func Upload(torrent *torrentfile.Torrent, msg *message.Message, conn net.Conn) e
 	return nil
 }
 
-func handleConnection(torrent *torrentfile.Torrent, conn net.Conn) {
+func handleConnection(torrent *p2p.Torrent, conn net.Conn) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
 	res, err := handshake.Read(reader)
@@ -161,14 +163,14 @@ func handleConnection(torrent *torrentfile.Torrent, conn net.Conn) {
 	}
 }
 
-func HandleSeed(torrent *torrentfile.Torrent, Port uint16) {
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", Port))
+func HandleServer(torrent *swarm.Torrent) {
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", torrent.Port))
 
 	if err != nil {
 		log.Fatalf("Failed to listen: %s", err)
 	}
 
-	log.Printf("Listening on localhost and port: %d ", Port)
+	log.Printf("Listening on localhost and port: %d ", torrent.Port)
 
 	for {
 		conn, err := ln.Accept()

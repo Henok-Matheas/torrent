@@ -16,7 +16,7 @@ type bencodeTrackerResp struct {
 	Peers    string `bencode:"peers"`
 }
 
-func (t *Torrent) buildTrackerURL(peerID [20]byte, Port uint16) (string, error) {
+func (t *TorrentFile) buildTrackerURL(peerID [20]byte, Port uint16) (string, error) {
 	base, err := url.Parse(t.Announce)
 	if err != nil {
 		return "", err
@@ -34,7 +34,7 @@ func (t *Torrent) buildTrackerURL(peerID [20]byte, Port uint16) (string, error) 
 	return base.String(), nil
 }
 
-func (t *Torrent) requestPeers(peerID [20]byte, port uint16) ([]peers.Peer, error) {
+func (t *TorrentFile) requestPeers(peerID [20]byte, port uint16) ([]peers.Peer, error) {
 	url, err := t.buildTrackerURL(peerID, port)
 	if err != nil {
 		return nil, err

@@ -10,20 +10,32 @@ import (
 )
 
 func main() {
-	inPath := os.Args[1]
-	portString := os.Args[2]
+	portString := os.Args[1]
+	file := os.Args[2]
 
 	Port, err := strconv.Atoi(portString)
-
-	tf, err := torrentfile.Open(inPath)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Port Number could not be parsed", err)
 	}
 
-	torrent, err := tf.DownloadToFile(tf.Name, uint16(Port))
+	// integrity checker and the other bitfield setter and all need to be here.
+	torrent, err := torrentfile.Unmarshal(file)
 	if err != nil {
 		log.Fatal(err)
+		return
 	}
 
-	seeder.HandleServer(torrent)
+	defer torrent.File.Close()
+
+	// create a leecher
+	leecher, err := torrent.CreateLeecher(uint16(Port))
+
+	if err != nil {
+		log.Fatal("Leecher could not be Initalized", err)
+		return
+	}
+	leecher.Download()
+
+	// let the seeder handle seeding
+	seeder.HandleSeed(&torrent, uint16(Port))
 }

@@ -1,6 +1,6 @@
 package bitfield
 
-// A Bitfield represents the pieces that a peer has
+// A Bitfield represents the pieces that the owner of the Bitfield has
 type Bitfield []byte
 
 // HasPiece tells if a bitfield has a particular index set
@@ -22,5 +22,5 @@ func (bf Bitfield) SetPiece(index int) {
 	if byteIndex < 0 || byteIndex >= len(bf) {
 		return
 	}
-	bf[byteIndex] |= 1 << uint(7 - offset)
+	bf[byteIndex] |= 1 << uint(7-offset)
 }

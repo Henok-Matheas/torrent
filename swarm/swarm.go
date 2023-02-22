@@ -1,4 +1,4 @@
-package p2p
+package swarm
 
 import (
 	"bytes"
@@ -18,8 +18,8 @@ import (
 // MaxBlockSize is the largest number of bytes a request can ask for
 const MaxBlockSize = 16384
 
-// MaxBacklog is the number of unfulfilled requests a client can have in its pipeline
-const MaxBacklog = 5
+// MaxRequests is the number of unfulfilled requests a client can have in its pipeline
+const MaxRequests = 5
 
 // Torrent holds data required to download a torrent from a list of peers
 type Torrent struct {
@@ -101,7 +101,7 @@ func attemptDownloadPiece(c *client.Client, pw *pieceWork) ([]byte, error) {
 	for state.downloaded < pw.length {
 		// If unchoked, send requests until we have enough unfulfilled requests
 		if !state.client.Choked {
-			for state.backlog < MaxBacklog && state.requested < pw.length {
+			for state.backlog < MaxRequests && state.requested < pw.length {
 				blockSize := MaxBlockSize
 				// Last block might be shorter than the typical block
 				if pw.length-state.requested < blockSize {
